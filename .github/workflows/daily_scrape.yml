@@ -1,0 +1,78 @@
+name: Daily Israeli RE Scrape
+
+on:
+  schedule:
+    # Runs at 11 PM UTC = 2 AM Israel Time (IST = UTC+3 in summer, UTC+2 in winter)
+    - cron: '0 23 * * *'
+  workflow_dispatch:  # Allow manual triggers
+    inputs:
+      cities:
+        description: 'Cities to scrape (comma-separated, leave empty for all)'
+        required: false
+        default: ''
+      listing_types:
+        description: 'Listing types (buy,rent,commercial,new_homes or leave empty for all)'
+        required: false
+        default: ''
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # 2 hour max
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install chromium
+          playwright install-deps
+
+      - name: Run ShamaiAI Orchestrator
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          CITIES: ${{ github.event.inputs.cities }}
+          LISTING_TYPES: ${{ github.event.inputs.listing_types }}
+        run: |
+          echo "Starting ShamaiAI scraper..."
+          echo "GitHub Run ID: $GITHUB_RUN_ID"
+          python src/orchestrator.py
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-logs-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
+
+      - name: Upload scraper report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-report-${{ github.run_id }}
+          path: reports/*.json
+          retention-days: 7
+
+  notify:
+    needs: scrape
+    runs-on: ubuntu-latest
+    if: failure()
+    
+    steps:
+      - name: Send failure notification
+        run: |
+          echo "Scraper failed on $(date)"
+          # Add Discord/Slack webhook here if needed
