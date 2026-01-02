@@ -1,6 +1,6 @@
 """
 ShamaiAI Orchestrator - LangGraph Multi-Source Scraping Pipeline
-Coordinates scraping from OnMap, Yad2, Madlan, and Government sources
+Coordinates scraping from OnMap, Yad2, and Madlan
 """
 
 import asyncio
@@ -17,10 +17,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Import scrapers (will be implemented)
-# from scrapers.onmap_scraper import OnMapScraper
-# from scrapers.yad2_scraper import Yad2Scraper
-# from scrapers.madlan_scraper import MadlanScraper
+# Import scrapers
+try:
+    from scrapers.onmap_scraper import OnMapScraper
+    from scrapers.yad2_scraper import Yad2Scraper
+    from scrapers.madlan_scraper import MadlanScraper
+except ImportError:
+    # Fallback for different import paths
+    from src.scrapers.onmap_scraper import OnMapScraper
+    from src.scrapers.yad2_scraper import Yad2Scraper
+    from src.scrapers.madlan_scraper import MadlanScraper
 
 
 class ShamaiAIOrchestrator:
@@ -31,11 +37,8 @@ class ShamaiAIOrchestrator:
     1. Initialize - Set targets (cities, listing types)
     2. OnMap - Scrape 4 listing types
     3. Yad2 - Scrape residential + commercial
-    4. Madlan - Scrape consumer listings (optional: professional)
-    5. Gov - Scrape nadlan.gov.il (when available)
-    6. Enrich - Geocode, calculate metrics
-    7. Analyze - Claude AI market analysis
-    8. Finalize - Generate reports, update dashboards
+    4. Madlan - Scrape consumer listings
+    5. Finalize - Generate reports, log stats
     """
     
     def __init__(self):
@@ -44,7 +47,7 @@ class ShamaiAIOrchestrator:
         
         # Parse environment inputs
         self.cities = self._parse_env_list('CITIES', default=['תל אביב', 'חיפה', 'ירושלים'])
-        self.listing_types = self._parse_env_list('LISTING_TYPES', default=['buy', 'rent', 'commercial', 'new_homes'])
+        self.listing_types = self._parse_env_list('LISTING_TYPES', default=['buy', 'rent'])
         
         # Stats tracking
         self.stats = {
@@ -53,6 +56,7 @@ class ShamaiAIOrchestrator:
             'sources_completed': [],
             'sources_failed': [],
             'total_properties': 0,
+            'properties_by_source': {},
             'errors': []
         }
         
@@ -71,12 +75,18 @@ class ShamaiAIOrchestrator:
         """Stage 1: Initialize targets and validate environment"""
         logger.info("=== STAGE 1: Initialize ===")
         
-        # Verify environment variables
-        required_vars = ['SUPABASE_URL', 'SUPABASE_KEY', 'ANTHROPIC_API_KEY']
+        # Verify required environment variables
+        required_vars = ['SUPABASE_URL', 'SUPABASE_KEY']
         missing = [var for var in required_vars if not os.getenv(var)]
         
         if missing:
             raise ValueError(f"Missing required environment variables: {missing}")
+        
+        # Optional: ANTHROPIC_API_KEY (for AI features)
+        if os.getenv('ANTHROPIC_API_KEY'):
+            logger.info("✓ ANTHROPIC_API_KEY found - AI features enabled")
+        else:
+            logger.warning("⚠ ANTHROPIC_API_KEY not set - AI features disabled")
         
         logger.info("✓ Environment validated")
         logger.info(f"✓ Targets set: {len(self.cities)} cities, {len(self.listing_types)} listing types")
@@ -88,20 +98,18 @@ class ShamaiAIOrchestrator:
         logger.info("=== STAGE 2: Scrape OnMap ===")
         
         try:
-            # TODO: Implement OnMapScraper
-            # scraper = OnMapScraper()
-            # stats = await scraper.run(
-            #     listing_types=self.listing_types,
-            #     cities=self.cities
-            # )
-            
-            # Placeholder for now
-            logger.info("OnMap scraper - Implementation pending")
-            stats = {'properties_scraped': 0, 'source': 'onmap'}
+            scraper = OnMapScraper()
+            stats = await scraper.run(
+                listing_types=self.listing_types,
+                cities=self.cities,
+                limit=5  # 5 scrolls per listing type
+            )
             
             self.stats['sources_completed'].append('onmap')
+            self.stats['properties_by_source']['onmap'] = stats.get('properties_scraped', 0)
             self.stats['total_properties'] += stats.get('properties_scraped', 0)
             
+            logger.info(f"✓ OnMap: {stats.get('properties_scraped', 0)} properties scraped")
             return stats
             
         except Exception as e:
@@ -115,20 +123,18 @@ class ShamaiAIOrchestrator:
         logger.info("=== STAGE 3: Scrape Yad2 ===")
         
         try:
-            # TODO: Implement Yad2Scraper
-            # scraper = Yad2Scraper()
-            # stats = await scraper.run(
-            #     listing_types=self.listing_types,
-            #     cities=self.cities
-            # )
-            
-            # Placeholder
-            logger.info("Yad2 scraper - Implementation pending")
-            stats = {'properties_scraped': 0, 'source': 'yad2'}
+            scraper = Yad2Scraper()
+            stats = await scraper.run(
+                listing_types=self.listing_types,
+                cities=self.cities,
+                limit=3  # 3 pages per listing type
+            )
             
             self.stats['sources_completed'].append('yad2')
+            self.stats['properties_by_source']['yad2'] = stats.get('properties_scraped', 0)
             self.stats['total_properties'] += stats.get('properties_scraped', 0)
             
+            logger.info(f"✓ Yad2: {stats.get('properties_scraped', 0)} properties scraped")
             return stats
             
         except Exception as e:
@@ -142,20 +148,18 @@ class ShamaiAIOrchestrator:
         logger.info("=== STAGE 4: Scrape Madlan ===")
         
         try:
-            # TODO: Implement MadlanScraper
-            # scraper = MadlanScraper()
-            # stats = await scraper.run(
-            #     listing_types=self.listing_types,
-            #     cities=self.cities
-            # )
-            
-            # Placeholder
-            logger.info("Madlan scraper - Implementation pending")
-            stats = {'properties_scraped': 0, 'source': 'madlan'}
+            scraper = MadlanScraper()
+            stats = await scraper.run(
+                listing_types=self.listing_types,
+                cities=self.cities,
+                limit=2  # 2 pages per listing type
+            )
             
             self.stats['sources_completed'].append('madlan')
+            self.stats['properties_by_source']['madlan'] = stats.get('properties_scraped', 0)
             self.stats['total_properties'] += stats.get('properties_scraped', 0)
             
+            logger.info(f"✓ Madlan: {stats.get('properties_scraped', 0)} properties scraped")
             return stats
             
         except Exception as e:
@@ -164,33 +168,9 @@ class ShamaiAIOrchestrator:
             self.stats['errors'].append(f"madlan: {str(e)}")
             return {'status': 'failed', 'error': str(e)}
     
-    async def stage_5_enrich_data(self) -> Dict[str, Any]:
-        """Stage 5: Enrich data (geocoding, calculations)"""
-        logger.info("=== STAGE 5: Enrich Data ===")
-        
-        # TODO: Implement enrichment
-        # - Geocode properties without lat/long
-        # - Calculate price per sqm
-        # - Detect outliers
-        
-        logger.info("Data enrichment - Implementation pending")
-        return {'status': 'pending'}
-    
-    async def stage_6_analyze_market(self) -> Dict[str, Any]:
-        """Stage 6: AI market analysis with Claude"""
-        logger.info("=== STAGE 6: Market Analysis ===")
-        
-        # TODO: Implement Claude AI analysis
-        # - Generate market insights
-        # - Calculate market signals
-        # - Identify trends
-        
-        logger.info("Market analysis - Implementation pending")
-        return {'status': 'pending'}
-    
-    async def stage_7_finalize(self) -> Dict[str, Any]:
-        """Stage 7: Finalize (generate reports, cleanup)"""
-        logger.info("=== STAGE 7: Finalize ===")
+    async def stage_5_finalize(self) -> Dict[str, Any]:
+        """Stage 5: Finalize (generate reports, cleanup)"""
+        logger.info("=== STAGE 5: Finalize ===")
         
         self.stats['end_time'] = datetime.now()
         duration = (self.stats['end_time'] - self.stats['start_time']).total_seconds()
@@ -201,6 +181,11 @@ class ShamaiAIOrchestrator:
         logger.info(f"Session ID: {self.session_id}")
         logger.info(f"Duration: {duration:.1f} seconds")
         logger.info(f"Total properties: {self.stats['total_properties']}")
+        
+        # Properties by source
+        for source, count in self.stats['properties_by_source'].items():
+            logger.info(f"  - {source}: {count}")
+        
         logger.info(f"Sources completed: {', '.join(self.stats['sources_completed'])}")
         
         if self.stats['sources_failed']:
@@ -223,9 +208,7 @@ class ShamaiAIOrchestrator:
             await self.stage_2_scrape_onmap()
             await self.stage_3_scrape_yad2()
             await self.stage_4_scrape_madlan()
-            await self.stage_5_enrich_data()
-            await self.stage_6_analyze_market()
-            await self.stage_7_finalize()
+            await self.stage_5_finalize()
             
             return self.stats
             
@@ -253,7 +236,7 @@ async def main():
             sys.exit(0)
             
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        logger.error(f"Fatal error: {e}", exc_info=True)
         sys.exit(1)
 
 
